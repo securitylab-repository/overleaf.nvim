@@ -187,10 +187,6 @@ function M._connect_project(cookie, project_id, project_name)
     -- download, ...) so they hit the same backend as the socket.
     if result.cookie then config.get().cookie = result.cookie end
 
-    -- This client's real-time collaboration session id — used as editorId
-    -- for SyncTeX forward search (see synctex.lua).
-    if result.publicId then M._state.editor_id = result.publicId end
-
     -- Parse project tree
     project.parse_project_tree(result.project)
 
@@ -507,7 +503,6 @@ function M._reconnect_to_project(cookie)
     M._reconnect.attempt = 0
 
     if result.cookie then config.get().cookie = result.cookie end
-    if result.publicId then M._state.editor_id = result.publicId end
 
     config.log('info', 'Reconnected to: %s', M._state.project_name or '?')
 
@@ -1018,10 +1013,15 @@ function M.compile()
 
   config.log('info', 'Compiling...')
 
+  -- editorId is sent with the compile request itself (matching Overleaf's
+  -- own web client) — the server associates it with the resulting build,
+  -- and SyncTeX forward search (see synctex.lua) needs to reuse the same
+  -- id to look anything up against that build afterwards.
   bridge.request('compile', {
     cookie = config.get().cookie,
     csrfToken = M._state.csrf_token,
     projectId = M._state.project_id,
+    editorId = synctex.ensure_editor_id(),
   }, function(err, result)
     if err then
       config.log('error', 'Compile failed: %s', err.message)

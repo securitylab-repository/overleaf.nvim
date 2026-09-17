@@ -4,11 +4,19 @@
 --- download (confirmed: a consistent 503 from its CDN, even though
 --- output.pdf and output.log download fine from the same build) — its own
 --- web client never does either. Instead it exposes a server-side lookup:
---- GET /project/<id>/sync/code?file=...&line=...&buildId=... returns the
---- matching {page, h, v} in the compiled PDF directly.
+--- GET /project/<id>/sync/code?file=...&line=...&buildId=...&editorId=...
+--- returns the matching {page, h, v} in the compiled PDF directly.
 ---
---- That response is a page + a position on it, not something a viewer's
---- own SyncTeX-file-based forward-search flag can consume (SumatraPDF's
+--- Per Overleaf's own frontend source
+--- (frontend/js/features/pdf-preview/util/{compiler,metrics}.ts): editorId
+--- is a UUID generated once per session and sent with the *compile*
+--- request too (see M.compile in init.lua) — the server associates it with
+--- that build, and sync/code silently returns no match for any other
+--- editorId, even a well-formed one. M.ensure_editor_id() is the single
+--- place that UUID is created, shared by compile and forward_search.
+---
+--- The response is a page + a position on it, not something a viewer's own
+--- SyncTeX-file-based forward-search flag can consume (SumatraPDF's
 --- `-forward-search` needs a local .synctex.gz, which we don't have), so
 --- this jumps SumatraPDF to the right PAGE via `-page`, not the exact
 --- position on it.
@@ -25,13 +33,19 @@ local M = {}
 --- the other submodules, e.g. tree.lua).
 local function overleaf() return require('overleaf') end
 
-local function generate_editor_id()
-  math.randomseed(os.time() + (vim.uv or vim.loop).hrtime())
-  local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
-  return (template:gsub('[xy]', function(c)
-    local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
-    return string.format('%x', v)
-  end))
+--- Ensure this session has a stable editorId, creating one if needed.
+---@return string
+function M.ensure_editor_id()
+  local ol = overleaf()
+  if not ol._state.editor_id then
+    math.randomseed(os.time() + (vim.uv or vim.loop).hrtime())
+    local template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+    ol._state.editor_id = (template:gsub('[xy]', function(c)
+      local v = (c == 'x') and math.random(0, 0xf) or math.random(8, 0xb)
+      return string.format('%x', v)
+    end))
+  end
+  return ol._state.editor_id
 end
 
 function M.forward_search()
@@ -58,11 +72,9 @@ function M.forward_search()
     return
   end
 
-  if not ol._state.editor_id then ol._state.editor_id = generate_editor_id() end
-
-  -- Overleaf's web editor (and this API) use 0-indexed lines, like CodeMirror;
-  -- Neovim's cursor row is 1-indexed.
-  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  -- Overleaf's web editor sends 1-indexed lines (`row + 1` from its
+  -- 0-indexed CodeMirror row) — matches Neovim's cursor row as-is.
+  local line = vim.api.nvim_win_get_cursor(0)[1]
 
   local bridge = require('overleaf.bridge')
   bridge.request('syncCode', {
@@ -72,7 +84,7 @@ function M.forward_search()
     line = line,
     column = 0,
     buildId = ol._state.last_build_id,
-    editorId = ol._state.editor_id,
+    editorId = M.ensure_editor_id(),
   }, function(err, result)
     if err then
       config.log('error', 'Forward search failed: %s', err.message)

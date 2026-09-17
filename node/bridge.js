@@ -181,15 +181,21 @@ const handlers = {
   },
 
   async compile(params) {
-    const { cookie, csrfToken, projectId } = params;
+    const { cookie, csrfToken, projectId, editorId } = params;
     if (!cookie || !csrfToken || !projectId) {
       throw { code: 'MISSING_PARAM', message: 'cookie, csrfToken, and projectId are required' };
     }
 
+    const compileBody = { check: 'silent', draft: false, incrementalCompilesEnabled: true, stopOnFirstError: false };
+    // Matches Overleaf's own web client: the server associates this id with
+    // the resulting build, and /sync/code (SyncTeX forward search) later
+    // needs the same id to find it — see bridge.js's syncCode handler.
+    if (editorId) compileBody.editorId = editorId;
+
     const compileRes = await auth.httpPost(
       `${BASE_URL}/project/${projectId}/compile?auto_compile=true`,
       cookie, csrfToken,
-      { check: 'silent', draft: false, incrementalCompilesEnabled: true, stopOnFirstError: false }
+      compileBody
     );
 
     if (compileRes.status !== 200) {
