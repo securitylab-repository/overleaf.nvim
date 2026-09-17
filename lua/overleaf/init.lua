@@ -21,10 +21,14 @@ local function open_file(file_path)
       cmd = { 'open', file_path }
     elseif vim.fn.has('wsl') == 1 then
       cmd = { 'wslview', file_path }
+    elseif vim.fn.has('win32') == 1 then
+      -- 'start' needs an empty title arg so a path containing spaces
+      -- isn't mistaken for the window title
+      cmd = { 'cmd.exe', '/c', 'start', '', file_path }
     else
       cmd = { 'xdg-open', file_path }
     end
-    vim.fn.system(cmd)
+    vim.fn.jobstart(cmd, { detach = true })
   end
 end
 
