@@ -4,6 +4,7 @@ local project = require('overleaf.project')
 local Document = require('overleaf.document')
 local buffer = require('overleaf.buffer')
 local sync = require('overleaf.sync')
+local synctex = require('overleaf.synctex')
 
 local M = {}
 
@@ -58,7 +59,10 @@ function M.setup(opts)
     map('n', '<leader>oR', function() M.reply_comment() end, { desc = 'Overleaf: Reply to comment' })
     map('n', '<leader>ox', function() M.resolve_comment() end, { desc = 'Overleaf: Resolve/reopen comment' })
     map('n', '<leader>of', function() M.search() end, { desc = 'Overleaf: Find in project' })
+    map('n', '<leader>ov', function() M.forward_search() end, { desc = 'Overleaf: Forward search (nvim -> PDF)' })
   end
+
+  synctex.setup_server()
 end
 
 function M.connect()
@@ -519,7 +523,11 @@ function M._rejoin_documents()
   end
 end
 
-function M.open_document(doc_id_or_path, doc_path)
+--- Open (or focus) an Overleaf document.
+---@param doc_id_or_path string doc id, or a project-relative path when doc_path is nil
+---@param doc_path string|nil
+---@param on_ready function|nil called with the doc once its buffer is ready (already open, or after join)
+function M.open_document(doc_id_or_path, doc_path, on_ready)
   local doc_id = doc_id_or_path
   local path = doc_path
 
@@ -540,6 +548,7 @@ function M.open_document(doc_id_or_path, doc_path)
     local existing = M._state.documents[doc_id]
     if existing.bufnr and vim.api.nvim_buf_is_valid(existing.bufnr) then
       vim.api.nvim_set_current_buf(existing.bufnr)
+      if on_ready then on_ready(existing) end
       return
     end
   end
@@ -567,6 +576,8 @@ function M.open_document(doc_id_or_path, doc_path)
         if doc.bufnr and vim.api.nvim_buf_is_valid(doc.bufnr) then comments.render(doc.bufnr, doc_id, doc.content) end
       end)
     end
+
+    if on_ready then on_ready(doc) end
   end)
 end
 
@@ -1019,12 +1030,19 @@ function M.compile()
   end)
 end
 
+--- SyncTeX forward search: jump from the cursor position in the current
+--- Overleaf buffer to the matching location in the last compiled PDF.
+--- Requires sync_dir to be set and SumatraPDF (Windows only for now).
+function M.forward_search() synctex.forward_search() end
+
 function M._open_pdf(output_files)
   local pdf_file = nil
+  local synctex_file = nil
   for _, f in ipairs(output_files) do
     if f.path == 'output.pdf' then
       pdf_file = f
-      break
+    elseif f.path == 'output.synctex.gz' then
+      synctex_file = f
     end
   end
   if not pdf_file or not pdf_file.url then return end
@@ -1039,7 +1057,25 @@ function M._open_pdf(output_files)
       config.log('debug', 'PDF download failed: %s', err.message)
       return
     end
+
+    M._state.last_pdf_path = result.path
     vim.schedule(function() open_file(result.path) end)
+
+    -- Fetch the matching SyncTeX table for forward/inverse search (best effort)
+    if synctex_file and synctex_file.url then
+      -- SumatraPDF expects "<pdf basename>.synctex.gz" next to the PDF
+      local synctex_name = result.path:match('([^/\\]+)%.pdf$')
+      if synctex_name then
+        bridge.request('downloadUrl', {
+          cookie = config.get().cookie,
+          url = config.get().base_url .. synctex_file.url,
+          fileName = synctex_name .. '.synctex.gz',
+          outputDir = config.get().pdf_dir,
+        }, function(sync_err, _sync_result)
+          if sync_err then config.log('debug', 'SyncTeX download failed: %s', sync_err.message) end
+        end)
+      end
+    end
   end)
 end
 

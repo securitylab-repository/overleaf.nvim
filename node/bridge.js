@@ -136,7 +136,9 @@ const handlers = {
     const dir = outputDir || require('os').tmpdir();
     const fs = require('fs');
     fs.mkdirSync(dir, { recursive: true });
-    const tmpPath = require('path').join(dir, 'overleaf_' + (fileName || 'download'));
+    // Use fileName verbatim (no prefix) so callers can control the exact
+    // basename — e.g. matching a PDF and its .synctex.gz for SumatraPDF.
+    const tmpPath = require('path').join(dir, fileName || 'overleaf_download');
 
     await new Promise((resolve, reject) => {
       const parsed = new URL(url);

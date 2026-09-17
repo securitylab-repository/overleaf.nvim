@@ -116,6 +116,7 @@ To get the cookie manually: open overleaf.com in your browser → DevTools (F12)
 | `:Overleaf sync` | Sync all documents to/from disk |
 | `:Overleaf sync import` | Import external changes from disk to Overleaf |
 | `:Overleaf sync export` | Export all documents to disk |
+| `:Overleaf forwardsearch` | Jump from the cursor to the matching location in the compiled PDF (SyncTeX) |
 
 ### Default Keymaps
 
@@ -131,6 +132,7 @@ To get the cookie manually: open overleaf.com in your browser → DevTools (F12)
 | `<leader>oR` | Reply to comment |
 | `<leader>ox` | Resolve/reopen comment |
 | `<leader>of` | Find in project (search) |
+| `<leader>ov` | Forward search: jump to cursor location in PDF (SyncTeX) |
 
 ### Tree Keymaps
 
@@ -163,7 +165,14 @@ require('overleaf').setup({
 
   -- Local file sync directory for external tools like Claude Code (default: nil = disabled)
   -- When set, all documents are mirrored to disk and external changes are synced back.
+  -- Also required for SyncTeX forward/inverse search — see "SyncTeX" below.
   sync_dir = '~/.overleaf',
+
+  -- SumatraPDF binary, used for SyncTeX forward search (Windows only)
+  sumatra_path = 'SumatraPDF.exe',
+
+  -- Neovim binary, used by the SyncTeX inverse-search helper to reach this instance
+  nvim_path = 'nvim',
 
   -- Set to false to disable default keymaps
   keys = true,
@@ -216,6 +225,36 @@ claude
 ```
 
 Claude Code can now read all your LaTeX files and make edits that sync back to Overleaf in real-time.
+
+## SyncTeX (forward/inverse search)
+
+Jump between a position in your `.tex` source and the matching location in the compiled PDF, in both directions. Currently supported on **Windows with SumatraPDF** only.
+
+Requires `sync_dir` to be set (SyncTeX only knows about real file paths, so documents must be mirrored to disk — see [External Tool Integration](#external-tool-integration-claude-code-etc) above).
+
+### Forward search (nvim → PDF)
+
+Run `:Overleaf forwardsearch` (or `<leader>ov`) with the cursor on the line you want to find. It opens/reuses a SumatraPDF window and jumps to the matching page and position. The PDF and its `.synctex.gz` are downloaded automatically after each `:Overleaf compile`.
+
+### Inverse search (PDF → nvim)
+
+Double-click a location in SumatraPDF to jump to the matching line in Neovim.
+
+One-time setup: open SumatraPDF → **Settings → Options** → set **"Set inverse search command line"** to:
+
+```
+node "<path-to-overleaf.nvim>/node/inverse-search.js" "%f" %l
+```
+
+(replace `<path-to-overleaf.nvim>` with your plugin install path, e.g. the output of `:lua print(require('overleaf.config').plugin_root())`). This only needs to be done once — SumatraPDF remembers it across PDFs and restarts.
+
+Under the hood: on `setup()`, the plugin starts a `--listen` server and publishes its address to `stdpath('data')/overleaf-nvim-server.txt`. SumatraPDF runs the helper script above on double-click, which reads that address and reaches your running Neovim via `nvim --server <addr> --remote-expr`.
+
+### Limitations
+
+- Windows + SumatraPDF only for now (macOS/Linux viewers with SyncTeX support — Skim, Zathura — could be added the same way).
+- Inverse search moves the cursor but does not steal window focus from the PDF viewer.
+- Only one Neovim instance's address is published at a time; with multiple instances open, inverse search reaches whichever one ran `setup()` most recently.
 
 ## How It Works
 

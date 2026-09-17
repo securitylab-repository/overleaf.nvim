@@ -5,9 +5,11 @@ M._config = {
   cookie = nil,
   node_path = 'node',
   base_url = 'https://www.overleaf.com', -- Overleaf instance URL (for self-hosted)
-  pdf_viewer = nil, -- PDF viewer command (nil = auto-detect: 'open' on macOS, 'xdg-open' on Linux)
+  pdf_viewer = nil, -- PDF viewer command (nil = auto-detect: 'open' on macOS, 'xdg-open' on Linux, 'start' on Windows)
   pdf_dir = nil, -- PDF output directory (nil = system temp dir)
   sync_dir = nil, -- Local file sync directory (nil = disabled; enables external tool integration)
+  sumatra_path = 'SumatraPDF.exe', -- SumatraPDF binary, used for SyncTeX forward search (Windows only)
+  nvim_path = 'nvim', -- Neovim binary, used by the SyncTeX inverse-search helper to reach this instance
   log_level = 'info', -- 'debug', 'info', 'warn', 'error'
 }
 

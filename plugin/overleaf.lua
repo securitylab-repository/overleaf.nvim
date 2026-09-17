@@ -22,6 +22,7 @@ local subcommands = {
     end
   end,
   history = function() require('overleaf').history() end,
+  forwardsearch = function() require('overleaf').forward_search() end,
   sync = function(args)
     if args == 'import' then
       require('overleaf').sync_import()
