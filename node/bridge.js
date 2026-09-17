@@ -259,17 +259,23 @@ const handlers = {
   // output.log from the same build succeed) — this is what its own web
   // client calls internally.
   async syncCode(params) {
-    const { cookie, projectId, file, line, column, buildId, editorId } = params;
+    const { cookie, projectId, file, line, column, buildId, editorId, clsiServerId, compileGroup } = params;
     if (!cookie || !projectId || !file || line === undefined || !buildId) {
       throw { code: 'MISSING_PARAM', message: 'cookie, projectId, file, line, and buildId are required' };
     }
-    const qs = new URLSearchParams({
+    const qsParams = {
       file,
       line: String(line),
       column: String(column || 0),
       editorId: editorId || '',
       buildId,
-    });
+    };
+    // Same per-build CLSI routing the output file downloads need (see
+    // buildOutputUrl) — included speculatively in case sync/code requires
+    // it too to reach the node that has this build's data.
+    if (clsiServerId) qsParams.clsiserverid = clsiServerId;
+    if (compileGroup) qsParams.compileGroup = compileGroup;
+    const qs = new URLSearchParams(qsParams);
     const url = `${BASE_URL}/project/${projectId}/sync/code?${qs.toString()}`;
     const res = await auth.httpGet(url, cookie);
     if (res.status !== 200) {

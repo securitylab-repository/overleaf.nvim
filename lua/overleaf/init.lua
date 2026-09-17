@@ -187,6 +187,10 @@ function M._connect_project(cookie, project_id, project_name)
     -- download, ...) so they hit the same backend as the socket.
     if result.cookie then config.get().cookie = result.cookie end
 
+    -- This client's real-time collaboration session id — used as editorId
+    -- for SyncTeX forward search (see synctex.lua).
+    if result.publicId then M._state.editor_id = result.publicId end
+
     -- Parse project tree
     project.parse_project_tree(result.project)
 
@@ -503,6 +507,7 @@ function M._reconnect_to_project(cookie)
     M._reconnect.attempt = 0
 
     if result.cookie then config.get().cookie = result.cookie end
+    if result.publicId then M._state.editor_id = result.publicId end
 
     config.log('info', 'Reconnected to: %s', M._state.project_name or '?')
 
@@ -1028,12 +1033,15 @@ function M.compile()
       -- Auto-download and open PDF. Output files can be served from a
       -- dedicated per-build CLSI/CDN host (see M._build_output_url) rather
       -- than the web frontend, so pass the compile response's routing
-      -- metadata through.
-      M._open_pdf(result.outputFiles or {}, {
+      -- metadata through. Also stashed on M._state for forward search,
+      -- which may need the same routing to reach this build's sync data.
+      local meta = {
         clsiServerId = result.clsiServerId,
         compileGroup = result.compileGroup,
         pdfDownloadDomain = result.pdfDownloadDomain,
-      })
+      }
+      M._state.last_compile_meta = meta
+      M._open_pdf(result.outputFiles or {}, meta)
     else
       config.log('warn', 'Compile status: %s', result.status)
     end
