@@ -265,7 +265,7 @@ const handlers = {
   // output.log from the same build succeed) — this is what its own web
   // client calls internally.
   async syncCode(params) {
-    const { cookie, projectId, file, line, column, buildId, editorId, clsiServerId } = params;
+    const { cookie, csrfToken, projectId, file, line, column, buildId, editorId, clsiServerId } = params;
     if (!cookie || !projectId || !file || line === undefined || !buildId) {
       throw { code: 'MISSING_PARAM', message: 'cookie, projectId, file, line, and buildId are required' };
     }
@@ -283,7 +283,7 @@ const handlers = {
     qsParams.buildId = buildId;
     const qs = new URLSearchParams(qsParams);
     const url = `${BASE_URL}/project/${projectId}/sync/code?${qs.toString()}`;
-    const res = await auth.httpGet(url, cookie);
+    const res = await auth.httpGet(url, cookie, csrfToken);
     if (res.status !== 200) {
       throw { code: 'SYNC_FAILED', message: `Forward search request failed: ${res.status} ${res.body || ''}`.trim() };
     }

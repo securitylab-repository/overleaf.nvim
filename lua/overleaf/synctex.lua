@@ -82,6 +82,7 @@ function M.forward_search()
   local bridge = require('overleaf.bridge')
   bridge.request('syncCode', {
     cookie = config.get().cookie,
+    csrfToken = ol._state.csrf_token,
     projectId = ol._state.project_id,
     file = doc.path,
     line = line,

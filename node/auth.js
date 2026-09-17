@@ -6,20 +6,25 @@ const cheerio = require('cheerio');
 
 const BASE_URL = process.env.OVERLEAF_URL || 'https://www.overleaf.com';
 
-function httpGet(url, cookie) {
+function httpGet(url, cookie, csrfToken) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const httpModule = parsed.protocol === 'http:' ? http : https;
+    const headers = {
+      'Cookie': cookie,
+      'User-Agent': 'overleaf-neovim/0.1',
+      // Overleaf's own API GETs (e.g. sync/code) send this even without a
+      // body; some endpoints appear to key off Accept/X-Csrf-Token to
+      // decide whether this is a "real" authenticated API session.
+      'Accept': csrfToken ? 'application/json' : 'text/html,application/xhtml+xml',
+    };
+    if (csrfToken) headers['X-Csrf-Token'] = csrfToken;
     const options = {
       hostname: parsed.hostname,
       port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
       path: parsed.pathname + parsed.search,
       method: 'GET',
-      headers: {
-        'Cookie': cookie,
-        'User-Agent': 'overleaf-neovim/0.1',
-        'Accept': 'text/html,application/xhtml+xml',
-      },
+      headers,
     };
 
     const req = httpModule.request(options, (res) => {
