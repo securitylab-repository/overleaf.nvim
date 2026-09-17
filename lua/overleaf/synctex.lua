@@ -64,8 +64,6 @@ function M.forward_search()
   -- Neovim's cursor row is 1-indexed.
   local line = vim.api.nvim_win_get_cursor(0)[1] - 1
 
-  local meta = ol._state.last_compile_meta or {}
-
   local bridge = require('overleaf.bridge')
   bridge.request('syncCode', {
     cookie = config.get().cookie,
@@ -75,8 +73,6 @@ function M.forward_search()
     column = 0,
     buildId = ol._state.last_build_id,
     editorId = ol._state.editor_id,
-    clsiServerId = meta.clsiServerId,
-    compileGroup = meta.compileGroup,
   }, function(err, result)
     if err then
       config.log('error', 'Forward search failed: %s', err.message)
