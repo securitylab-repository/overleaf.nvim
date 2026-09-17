@@ -13,8 +13,14 @@ local M = {}
 local function open_file(file_path)
   local viewer = config.get().pdf_viewer
   if viewer then
-    -- User-configured viewer: run as background job to avoid disrupting cursor/window layout
-    vim.fn.jobstart({ viewer, file_path }, { detach = true })
+    -- User-configured viewer: run as background job to avoid disrupting cursor/window layout.
+    -- SumatraPDF reuses its existing window (and, with ReloadModifiedDocuments
+    -- enabled in its own settings, auto-reloads the file) when given
+    -- -reuse-instance — without it, like any other viewer, it opens a new
+    -- window on every compile.
+    local cmd = { viewer, file_path }
+    if viewer:lower():match('sumatrapdf%.exe$') then table.insert(cmd, 2, '-reuse-instance') end
+    vim.fn.jobstart(cmd, { detach = true })
   else
     -- Auto-detect platform launcher (runs in background)
     local cmd
