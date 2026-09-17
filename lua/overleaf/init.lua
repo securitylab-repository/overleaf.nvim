@@ -1115,10 +1115,29 @@ function M._open_pdf(output_files, meta)
           url = sync_url,
           fileName = synctex_name .. '.synctex.gz',
           outputDir = config.get().pdf_dir,
-        }, function(sync_err, _sync_result)
-          if sync_err then config.log('debug', 'SyncTeX download failed: %s', sync_err.message) end
+        }, function(sync_err, sync_result)
+          if sync_err then
+            config.log('warn', 'SyncTeX download failed (forward/inverse search will not work): %s', sync_err.message)
+          else
+            config.log('debug', 'SyncTeX table saved: %s', sync_result.path)
+          end
         end)
       end
+    else
+      config.log(
+        'debug',
+        'No output.synctex.gz in compile output (forward/inverse search will not work). Files: %s',
+        table.concat(
+          (function()
+            local names = {}
+            for _, f in ipairs(output_files) do
+              table.insert(names, f.path)
+            end
+            return names
+          end)(),
+          ', '
+        )
+      )
     end
   end)
 end
