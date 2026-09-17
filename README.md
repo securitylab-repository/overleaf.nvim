@@ -116,7 +116,7 @@ To get the cookie manually: open overleaf.com in your browser → DevTools (F12)
 | `:Overleaf sync` | Sync all documents to/from disk |
 | `:Overleaf sync import` | Import external changes from disk to Overleaf |
 | `:Overleaf sync export` | Export all documents to disk |
-| `:Overleaf forwardsearch` | Jump from the cursor to the matching page in the compiled PDF (SyncTeX) |
+| `:Overleaf forwardsearch` | Jump from the cursor to the matching page in the compiled PDF (SyncTeX) — ⚠️ [known issue](#synctex-forward-search-nvim--pdf--known-issue-not-currently-working), not currently working |
 
 ### Default Keymaps
 
@@ -222,19 +222,20 @@ claude
 
 Claude Code can now read all your LaTeX files and make edits that sync back to Overleaf in real-time.
 
-## SyncTeX forward search (nvim → PDF)
+## SyncTeX forward search (nvim → PDF) — ⚠️ known issue, not currently working
 
-Jump from the cursor in your `.tex` source to the matching page in the compiled PDF. Currently supported on **Windows with SumatraPDF** only.
+`:Overleaf forwardsearch` (or `<leader>ov`) is meant to jump from the cursor in your `.tex` source to the matching page in the compiled PDF, via SumatraPDF on Windows. **As currently implemented it does not reliably work against overleaf.com** and usually reports "No matching PDF location found for this line."
 
-Run `:Overleaf forwardsearch` (or `<leader>ov`) with the cursor on the line you want to find. It opens/reuses a SumatraPDF window and jumps to the matching **page** — not the exact position on it. Overleaf does not serve a compile's raw `.synctex.gz` for direct download (its own web client doesn't either), so the plugin can't hand a local SyncTeX table to SumatraPDF's own `-forward-search`, which is what would normally give pixel-precise positioning. Instead it calls Overleaf's own `/project/<id>/sync/code` endpoint, the same one the web editor's "jump to PDF" button uses, which only returns a page + position — enough to jump SumatraPDF to the right page via `-page`.
+What's confirmed, for anyone picking this up:
 
-For the same reason, **inverse search (double-click in the PDF → jump in Neovim) isn't implemented**: SumatraPDF only invokes an external command on double-click when it has resolved the click itself from a local SyncTeX table, which isn't available here.
+- Overleaf doesn't serve a compile's raw `.synctex.gz` for direct download (its own web client doesn't either — confirmed via a consistent 503), so this can't hand a local SyncTeX table to a PDF viewer's own `-forward-search`. It instead calls Overleaf's own `/project/<id>/sync/code` endpoint — the same one the web editor's "jump to PDF" button uses — which returns a page + position directly.
+- The request this sends has been verified byte-for-byte identical (query params — `file`, `line`, `column`, `editorId`, `buildId`, `clsiserverid` — and headers, including `X-Csrf-Token`) to a captured request from Overleaf's own web UI for the same project/file/line, including replaying the exact generated URL directly in a browser tab (same cookies), which also comes back empty.
+- A controlled A/B test showed a fresh build compiled via Overleaf's own "Recompile" button *can* be forward-searched successfully; a fresh build compiled through `:Overleaf compile` moments later, same project/account, consistently cannot — so something about how this plugin triggers the compile produces a build `sync/code` can't resolve against, even though the resulting PDF/log are otherwise fine.
+- Sending `editorId` and `rootDoc_id` with the compile request (matching Overleaf's web client, which this plugin's compile request was missing) were both tried as the fix and neither changed the outcome.
 
-### Limitations
+Not yet root-caused beyond this — see the comment at the top of `lua/overleaf/synctex.lua` for the full trail. Next step would be comparing raw network traffic (e.g. via a proxy) between the browser and this plugin's Node bridge, which wasn't possible in the environment this was debugged in.
 
-- Windows + SumatraPDF only for now.
-- Page-level accuracy only, not exact line position within the page.
-- No inverse search (PDF → nvim) — see above.
+**Inverse search (double-click in the PDF → jump in Neovim) isn't implemented at all**, independent of the above: SumatraPDF only invokes an external command on double-click when it has resolved the click itself from a local SyncTeX table, which isn't available here either way.
 
 ## How It Works
 

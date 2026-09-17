@@ -1,25 +1,35 @@
 --- SyncTeX forward search (nvim -> PDF).
 ---
+--- KNOWN ISSUE: currently does not work reliably against overleaf.com. See
+--- below for what's confirmed working and what isn't.
+---
 --- Overleaf does not serve a compile's raw output.synctex.gz for direct
 --- download (confirmed: a consistent 503 from its CDN, even though
 --- output.pdf and output.log download fine from the same build) — its own
 --- web client never does either. Instead it exposes a server-side lookup:
 --- GET /project/<id>/sync/code?file=...&line=...&buildId=...&editorId=...
---- returns the matching {page, h, v} in the compiled PDF directly.
+--- returns the matching {page, h, v} in the compiled PDF directly (the
+--- same endpoint its "jump to PDF" button uses). That response is a page +
+--- a position on it, not something a viewer's own SyncTeX-file-based
+--- forward-search flag can consume (SumatraPDF's `-forward-search` needs a
+--- local .synctex.gz, which we don't have), so this jumps SumatraPDF to
+--- the right PAGE via `-page`, not the exact position on it.
 ---
---- Per Overleaf's own frontend source
---- (frontend/js/features/pdf-preview/util/{compiler,metrics}.ts): editorId
---- is a UUID generated once per session and sent with the *compile*
---- request too (see M.compile in init.lua) — the server associates it with
---- that build, and sync/code silently returns no match for any other
---- editorId, even a well-formed one. M.ensure_editor_id() is the single
---- place that UUID is created, shared by compile and forward_search.
----
---- The response is a page + a position on it, not something a viewer's own
---- SyncTeX-file-based forward-search flag can consume (SumatraPDF's
---- `-forward-search` needs a local .synctex.gz, which we don't have), so
---- this jumps SumatraPDF to the right PAGE via `-page`, not the exact
---- position on it.
+--- The request this module sends has been verified byte-for-byte identical
+--- (params, including editorId/clsiServerId/buildId, and headers,
+--- including X-Csrf-Token) to a captured request from Overleaf's own web
+--- UI for the same project/file/line — including replaying our exact
+--- generated URL directly in the browser, which also returns an empty
+--- match. A controlled A/B test also showed a fresh build compiled via
+--- Overleaf's own "Recompile" button *can* be forward-searched
+--- successfully, while a fresh build compiled through this plugin's
+--- `:Overleaf compile` (same project, same account, moments apart)
+--- consistently cannot — so something about how the compile itself is
+--- triggered here produces a build sync/code can't resolve against, even
+--- though the resulting PDF/log are otherwise fine. `editorId` (sent with
+--- the compile request, matching the web client) and `rootDoc_id` (ditto)
+--- were both tried as the missing piece and neither changed the outcome.
+--- Not yet root-caused beyond this.
 ---
 --- Inverse search (PDF -> nvim) is not implemented: SumatraPDF only runs
 --- an external inverse-search command when it has resolved the click
@@ -100,10 +110,9 @@ function M.forward_search()
     if not hit then
       config.log(
         'warn',
-        'No matching PDF location found for this line. GET %s -> %s',
-        result.requestUrl or '?',
-        result.rawBody or '?'
+        'No matching PDF location found for this line (known issue — see lua/overleaf/synctex.lua)'
       )
+      config.log('debug', 'GET %s -> %s', result.requestUrl or '?', result.rawBody or '?')
       return
     end
 
