@@ -1054,7 +1054,7 @@ function M._open_pdf(output_files)
     outputDir = config.get().pdf_dir,
   }, function(err, result)
     if err then
-      config.log('debug', 'PDF download failed: %s', err.message)
+      config.log('error', 'PDF download failed: %s', err.message)
       return
     end
 
