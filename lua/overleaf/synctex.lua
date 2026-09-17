@@ -60,7 +60,9 @@ function M.forward_search()
 
   if not ol._state.editor_id then ol._state.editor_id = generate_editor_id() end
 
-  local line = vim.api.nvim_win_get_cursor(0)[1]
+  -- Overleaf's web editor (and this API) use 0-indexed lines, like CodeMirror;
+  -- Neovim's cursor row is 1-indexed.
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
 
   local bridge = require('overleaf.bridge')
   bridge.request('syncCode', {
