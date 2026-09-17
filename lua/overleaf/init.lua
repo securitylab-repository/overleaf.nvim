@@ -1013,6 +1013,12 @@ function M.compile()
 
   config.log('info', 'Compiling...')
 
+  -- The web client also sends rootDoc_id explicitly (not left to server-side
+  -- auto-detection) — try to find it on the raw project payload so a fresh
+  -- compile matches what the browser sends as closely as possible.
+  local root_doc_id = M._state.project_data and M._state.project_data.rootDoc_id
+  config.log('warn', 'rootDoc_id on project payload: %s', tostring(root_doc_id))
+
   -- editorId is sent with the compile request itself (matching Overleaf's
   -- own web client) — the server associates it with the resulting build,
   -- and SyncTeX forward search (see synctex.lua) needs to reuse the same
@@ -1022,6 +1028,7 @@ function M.compile()
     csrfToken = M._state.csrf_token,
     projectId = M._state.project_id,
     editorId = synctex.ensure_editor_id(),
+    rootDocId = root_doc_id,
   }, function(err, result)
     if err then
       config.log('error', 'Compile failed: %s', err.message)

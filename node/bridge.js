@@ -181,7 +181,7 @@ const handlers = {
   },
 
   async compile(params) {
-    const { cookie, csrfToken, projectId, editorId } = params;
+    const { cookie, csrfToken, projectId, editorId, rootDocId } = params;
     if (!cookie || !csrfToken || !projectId) {
       throw { code: 'MISSING_PARAM', message: 'cookie, csrfToken, and projectId are required' };
     }
@@ -191,6 +191,9 @@ const handlers = {
     // the resulting build, and /sync/code (SyncTeX forward search) later
     // needs the same id to find it — see bridge.js's syncCode handler.
     if (editorId) compileBody.editorId = editorId;
+    // The web client sends this explicitly too, rather than relying on the
+    // server's own auto-detection fallback.
+    if (rootDocId) compileBody.rootDoc_id = rootDocId;
 
     const compileRes = await auth.httpPost(
       `${BASE_URL}/project/${projectId}/compile`,
