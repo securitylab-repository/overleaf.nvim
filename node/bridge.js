@@ -193,7 +193,7 @@ const handlers = {
     if (editorId) compileBody.editorId = editorId;
 
     const compileRes = await auth.httpPost(
-      `${BASE_URL}/project/${projectId}/compile?auto_compile=true`,
+      `${BASE_URL}/project/${projectId}/compile`,
       cookie, csrfToken,
       compileBody
     );
