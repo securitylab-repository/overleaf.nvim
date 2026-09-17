@@ -9,7 +9,6 @@ M._config = {
   pdf_dir = nil, -- PDF output directory (nil = system temp dir)
   sync_dir = nil, -- Local file sync directory (nil = disabled; enables external tool integration)
   sumatra_path = 'SumatraPDF.exe', -- SumatraPDF binary, used for SyncTeX forward search (Windows only)
-  nvim_path = 'nvim', -- Neovim binary, used by the SyncTeX inverse-search helper to reach this instance
   log_level = 'info', -- 'debug', 'info', 'warn', 'error'
 }
 

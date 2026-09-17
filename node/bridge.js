@@ -227,8 +227,7 @@ const handlers = {
     const dir = outputDir || require('os').tmpdir();
     const fs = require('fs');
     fs.mkdirSync(dir, { recursive: true });
-    // Use fileName verbatim (no prefix) so callers can control the exact
-    // basename — e.g. matching a PDF and its .synctex.gz for SumatraPDF.
+    // Use fileName verbatim (no prefix) so callers can control the exact basename.
     const tmpPath = require('path').join(dir, fileName || 'overleaf_download');
 
     await downloadToFile(url, cookie, tmpPath);
@@ -252,6 +251,37 @@ const handlers = {
     await downloadToFile(url, cookie, tmpPath);
 
     return { path: tmpPath };
+  },
+
+  // SyncTeX forward search. Overleaf resolves this server-side rather than
+  // exposing the compile's raw .synctex.gz for direct download (confirmed:
+  // that download consistently 404s/503s even though output.pdf and
+  // output.log from the same build succeed) — this is what its own web
+  // client calls internally.
+  async syncCode(params) {
+    const { cookie, projectId, file, line, column, buildId, editorId } = params;
+    if (!cookie || !projectId || !file || line === undefined || !buildId) {
+      throw { code: 'MISSING_PARAM', message: 'cookie, projectId, file, line, and buildId are required' };
+    }
+    const qs = new URLSearchParams({
+      file,
+      line: String(line),
+      column: String(column || 0),
+      editorId: editorId || '',
+      buildId,
+    });
+    const url = `${BASE_URL}/project/${projectId}/sync/code?${qs.toString()}`;
+    const res = await auth.httpGet(url, cookie);
+    if (res.status !== 200) {
+      throw { code: 'SYNC_FAILED', message: `Forward search request failed: ${res.status}` };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(res.body);
+    } catch (e) {
+      throw { code: 'PARSE_ERROR', message: `Failed to parse sync/code response: ${e.message}` };
+    }
+    return { pdf: parsed.pdf || [] };
   },
 
   async createDoc(params) {

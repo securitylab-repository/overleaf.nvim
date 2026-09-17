@@ -61,8 +61,6 @@ function M.setup(opts)
     map('n', '<leader>of', function() M.search() end, { desc = 'Overleaf: Find in project' })
     map('n', '<leader>ov', function() M.forward_search() end, { desc = 'Overleaf: Forward search (nvim -> PDF)' })
   end
-
-  synctex.setup_server()
 end
 
 function M.connect()
@@ -1078,15 +1076,17 @@ end
 
 function M._open_pdf(output_files, meta)
   local pdf_file = nil
-  local synctex_file = nil
   for _, f in ipairs(output_files) do
     if f.path == 'output.pdf' then
       pdf_file = f
-    elseif f.path == 'output.synctex.gz' then
-      synctex_file = f
+      break
     end
   end
   if not pdf_file or not pdf_file.url then return end
+
+  -- Forward search needs the id of this specific build (see synctex.lua);
+  -- it's the path segment right before "output" in the file's own URL.
+  M._state.last_build_id = pdf_file.url:match('/build/([^/]+)/output/')
 
   local pdf_url, pdf_send_cookie = M._build_output_url(pdf_file.url, meta)
 
@@ -1103,42 +1103,6 @@ function M._open_pdf(output_files, meta)
 
     M._state.last_pdf_path = result.path
     vim.schedule(function() open_file(result.path) end)
-
-    -- Fetch the matching SyncTeX table for forward/inverse search (best effort)
-    if synctex_file and synctex_file.url then
-      -- SumatraPDF expects "<pdf basename>.synctex.gz" next to the PDF
-      local synctex_name = result.path:match('([^/\\]+)%.pdf$')
-      if synctex_name then
-        local sync_url, sync_send_cookie = M._build_output_url(synctex_file.url, meta)
-        bridge.request('downloadUrl', {
-          cookie = sync_send_cookie and config.get().cookie or nil,
-          url = sync_url,
-          fileName = synctex_name .. '.synctex.gz',
-          outputDir = config.get().pdf_dir,
-        }, function(sync_err, sync_result)
-          if sync_err then
-            config.log('warn', 'SyncTeX download failed (forward/inverse search will not work): %s', sync_err.message)
-          else
-            config.log('debug', 'SyncTeX table saved: %s', sync_result.path)
-          end
-        end)
-      end
-    else
-      config.log(
-        'debug',
-        'No output.synctex.gz in compile output (forward/inverse search will not work). Files: %s',
-        table.concat(
-          (function()
-            local names = {}
-            for _, f in ipairs(output_files) do
-              table.insert(names, f.path)
-            end
-            return names
-          end)(),
-          ', '
-        )
-      )
-    end
   end)
 end
 
