@@ -124,7 +124,12 @@ const handlers = {
     }
 
     socketManager = new SocketManager(cookie, projectId, sendEvent);
-    return await socketManager.connect();
+    const result = await socketManager.connect();
+    // Report the GCLB-stickied cookie back so subsequent HTTP requests
+    // (compile, downloadUrl, ...) hit the same backend as the socket —
+    // otherwise they can 404 against a build that only exists on the
+    // node the socket is stuck to.
+    return { ...result, cookie };
   },
 
   async joinDoc(params) {

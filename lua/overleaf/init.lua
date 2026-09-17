@@ -180,6 +180,11 @@ function M._connect_project(cookie, project_id, project_name)
     M._state.project_name = project_name
     M._state.project_data = result.project
 
+    -- The bridge appends a GCLB stickiness cookie for the socket connection;
+    -- reuse the same cookie for subsequent HTTP requests (compile, PDF
+    -- download, ...) so they hit the same backend as the socket.
+    if result.cookie then config.get().cookie = result.cookie end
+
     -- Parse project tree
     project.parse_project_tree(result.project)
 
@@ -494,6 +499,8 @@ function M._reconnect_to_project(cookie)
     M._state.connected = true
     M._state.project_data = result.project
     M._reconnect.attempt = 0
+
+    if result.cookie then config.get().cookie = result.cookie end
 
     config.log('info', 'Reconnected to: %s', M._state.project_name or '?')
 
