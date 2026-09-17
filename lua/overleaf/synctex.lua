@@ -74,7 +74,10 @@ function M.forward_search()
 
   -- Overleaf's web editor sends 1-indexed lines (`row + 1` from its
   -- 0-indexed CodeMirror row) — matches Neovim's cursor row as-is.
-  local line = vim.api.nvim_win_get_cursor(0)[1]
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local line, column = cursor[1], cursor[2]
+
+  local meta = ol._state.last_compile_meta or {}
 
   local bridge = require('overleaf.bridge')
   bridge.request('syncCode', {
@@ -82,9 +85,10 @@ function M.forward_search()
     projectId = ol._state.project_id,
     file = doc.path,
     line = line,
-    column = 0,
+    column = column,
     buildId = ol._state.last_build_id,
     editorId = M.ensure_editor_id(),
+    clsiServerId = meta.clsiServerId,
   }, function(err, result)
     if err then
       config.log('error', 'Forward search failed: %s', err.message)

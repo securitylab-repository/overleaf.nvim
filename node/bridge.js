@@ -265,17 +265,23 @@ const handlers = {
   // output.log from the same build succeed) — this is what its own web
   // client calls internally.
   async syncCode(params) {
-    const { cookie, projectId, file, line, column, buildId, editorId } = params;
+    const { cookie, projectId, file, line, column, buildId, editorId, clsiServerId } = params;
     if (!cookie || !projectId || !file || line === undefined || !buildId) {
       throw { code: 'MISSING_PARAM', message: 'cookie, projectId, file, line, and buildId are required' };
     }
-    const qs = new URLSearchParams({
+    const qsParams = {
       file,
       line: String(line),
       column: String(column || 0),
-      editorId: editorId || '',
-      buildId,
-    });
+    };
+    // Same per-build CLSI routing the output file downloads need (see
+    // buildOutputUrl) — without it the request can reach a backend that
+    // doesn't have this build's sync data and silently returns no match.
+    // Confirmed present in the request Overleaf's own web UI sends.
+    if (clsiServerId) qsParams.clsiserverid = clsiServerId;
+    qsParams.editorId = editorId || '';
+    qsParams.buildId = buildId;
+    const qs = new URLSearchParams(qsParams);
     const url = `${BASE_URL}/project/${projectId}/sync/code?${qs.toString()}`;
     const res = await auth.httpGet(url, cookie);
     if (res.status !== 200) {
