@@ -1103,7 +1103,23 @@ function M._open_pdf(output_files, meta)
       break
     end
   end
-  if not pdf_file or not pdf_file.url then return end
+  if not pdf_file or not pdf_file.url then
+    config.log(
+      'warn',
+      'Compile succeeded but no output.pdf in the response. Files: %s',
+      table.concat(
+        (function()
+          local names = {}
+          for _, f in ipairs(output_files) do
+            table.insert(names, f.path)
+          end
+          return names
+        end)(),
+        ', '
+      )
+    )
+    return
+  end
 
   -- Forward search needs the id of this specific build (see synctex.lua);
   -- it's the path segment right before "output" in the file's own URL.
