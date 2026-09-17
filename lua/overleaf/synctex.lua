@@ -81,7 +81,12 @@ function M.forward_search()
 
     local hit = result.pdf and result.pdf[1]
     if not hit then
-      config.log('warn', 'No matching PDF location found for this line')
+      config.log(
+        'warn',
+        'No matching PDF location found for this line. GET %s -> %s',
+        result.requestUrl or '?',
+        result.rawBody or '?'
+      )
       return
     end
 

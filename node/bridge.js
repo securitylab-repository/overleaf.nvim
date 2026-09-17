@@ -281,7 +281,7 @@ const handlers = {
     } catch (e) {
       throw { code: 'PARSE_ERROR', message: `Failed to parse sync/code response: ${e.message}` };
     }
-    return { pdf: parsed.pdf || [] };
+    return { pdf: parsed.pdf || [], requestUrl: url, rawBody: res.body };
   },
 
   async createDoc(params) {
