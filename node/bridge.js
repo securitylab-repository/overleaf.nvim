@@ -20,9 +20,34 @@ let stdinClosed = false;
 const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 
 /**
+ * Build the absolute URL for a compile output file (PDF, log, SyncTeX
+ * table, ...). When the compile response carries a clsiServerId and
+ * pdfDownloadDomain, the file is served from a dedicated per-build
+ * CLSI/CDN host and needs those as query params — the plain
+ * `${BASE_URL}${fileUrl}` path 404s in that case. Falls back to the web
+ * frontend host otherwise (e.g. self-hosted Overleaf without a CDN).
+ */
+function buildOutputUrl(fileUrl, compileResult) {
+  const { clsiServerId, compileGroup, pdfDownloadDomain } = compileResult || {};
+  if (pdfDownloadDomain && clsiServerId) {
+    const domain = pdfDownloadDomain.replace(/\/+$/, '');
+    const path = fileUrl.replace(/^\/+/, '');
+    const qp = new URLSearchParams({
+      compileGroup: compileGroup || 'standard',
+      clsiserverid: clsiServerId,
+      enable_pdf_caching: 'true',
+    });
+    return `${domain}/${path}?${qp.toString()}`;
+  }
+  return `${BASE_URL}${fileUrl}`;
+}
+
+/**
  * GET a URL (following redirects) and write the response body to destPath.
  * Rejects on a non-2xx final status so a redirect/auth failure never
- * silently produces an empty file.
+ * silently produces an empty file. `cookie` is optional — the CLSI/CDN
+ * host from buildOutputUrl() is cross-origin and authenticates via its
+ * signed query params, not the web frontend session cookie.
  */
 function downloadToFile(url, cookie, destPath, maxRedirects = 5) {
   const fs = require('fs');
@@ -37,7 +62,7 @@ function downloadToFile(url, cookie, destPath, maxRedirects = 5) {
             hostname: parsed.hostname,
             port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
             path: parsed.pathname + parsed.search,
-            headers: { 'Cookie': cookie },
+            headers: cookie ? { 'Cookie': cookie } : {},
           },
           (res) => {
             if (REDIRECT_CODES.has(res.statusCode) && res.headers.location) {
@@ -173,22 +198,30 @@ const handlers = {
 
     const parsed = JSON.parse(compileRes.body);
 
-    // Download log if available
+    // Download log if available. Output files are served from a per-build
+    // CLSI/CDN host when present — see buildOutputUrl() below.
     const logFile = (parsed.outputFiles || []).find(f => f.path === 'output.log');
     let log = '';
     if (logFile) {
-      const logUrl = `${BASE_URL}${logFile.url}`;
+      const logUrl = buildOutputUrl(logFile.url, parsed);
       const logRes = await auth.httpGet(logUrl, cookie);
       log = logRes.body;
     }
 
-    return { status: parsed.status, outputFiles: parsed.outputFiles || [], log };
+    return {
+      status: parsed.status,
+      outputFiles: parsed.outputFiles || [],
+      log,
+      clsiServerId: parsed.clsiServerId,
+      compileGroup: parsed.compileGroup,
+      pdfDownloadDomain: parsed.pdfDownloadDomain,
+    };
   },
 
   async downloadUrl(params) {
     const { cookie, url, fileName, outputDir } = params;
-    if (!cookie || !url) {
-      throw { code: 'MISSING_PARAM', message: 'cookie and url are required' };
+    if (!url) {
+      throw { code: 'MISSING_PARAM', message: 'url is required' };
     }
 
     const dir = outputDir || require('os').tmpdir();

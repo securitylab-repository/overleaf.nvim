@@ -1016,8 +1016,15 @@ function M.compile()
 
     if result.status == 'success' then
       config.log('info', 'Compile succeeded')
-      -- Auto-download and open PDF
-      M._open_pdf(result.outputFiles or {})
+      -- Auto-download and open PDF. Output files can be served from a
+      -- dedicated per-build CLSI/CDN host (see M._build_output_url) rather
+      -- than the web frontend, so pass the compile response's routing
+      -- metadata through.
+      M._open_pdf(result.outputFiles or {}, {
+        clsiServerId = result.clsiServerId,
+        compileGroup = result.compileGroup,
+        pdfDownloadDomain = result.pdfDownloadDomain,
+      })
     else
       config.log('warn', 'Compile status: %s', result.status)
     end
@@ -1026,7 +1033,34 @@ function M.compile()
   end)
 end
 
-function M._open_pdf(output_files)
+--- Build the absolute URL (and whether to send the session cookie) for a
+--- compile output file. When the compile response carries a clsiServerId
+--- and pdfDownloadDomain, the file is served from a dedicated per-build
+--- CLSI/CDN host and needs those as query params — `base_url .. file_url`
+--- 404s in that case, since that file only exists on that specific node.
+--- The CDN is cross-origin and authenticates via its own signed query
+--- params, so the web frontend session cookie is neither needed nor sent.
+---@param file_url string
+---@param meta table|nil { clsiServerId, compileGroup, pdfDownloadDomain }
+---@return string url, boolean send_cookie
+function M._build_output_url(file_url, meta)
+  meta = meta or {}
+  if meta.pdfDownloadDomain and meta.clsiServerId then
+    local domain = meta.pdfDownloadDomain:gsub('/+$', '')
+    local path = file_url:gsub('^/+', '')
+    local url = string.format(
+      '%s/%s?compileGroup=%s&clsiserverid=%s&enable_pdf_caching=true',
+      domain,
+      path,
+      meta.compileGroup or 'standard',
+      meta.clsiServerId
+    )
+    return url, false
+  end
+  return config.get().base_url .. file_url, true
+end
+
+function M._open_pdf(output_files, meta)
   local pdf_file = nil
   for _, f in ipairs(output_files) do
     if f.path == 'output.pdf' then
@@ -1036,9 +1070,11 @@ function M._open_pdf(output_files)
   end
   if not pdf_file or not pdf_file.url then return end
 
+  local pdf_url, pdf_send_cookie = M._build_output_url(pdf_file.url, meta)
+
   bridge.request('downloadUrl', {
-    cookie = config.get().cookie,
-    url = config.get().base_url .. pdf_file.url,
+    cookie = pdf_send_cookie and config.get().cookie or nil,
+    url = pdf_url,
     fileName = (M._state.project_name or 'output') .. '.pdf',
     outputDir = config.get().pdf_dir,
   }, function(err, result)
