@@ -17,6 +17,59 @@ let socketManager = null;
 let pendingRequests = 0;
 let stdinClosed = false;
 
+const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * GET a URL (following redirects) and write the response body to destPath.
+ * Rejects on a non-2xx final status so a redirect/auth failure never
+ * silently produces an empty file.
+ */
+function downloadToFile(url, cookie, destPath, maxRedirects = 5) {
+  const fs = require('fs');
+
+  return new Promise((resolve, reject) => {
+    function get(currentUrl, redirectsLeft) {
+      const parsed = new URL(currentUrl);
+      const httpModule = parsed.protocol === 'http:' ? require('http') : require('https');
+      httpModule
+        .get(
+          {
+            hostname: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
+            path: parsed.pathname + parsed.search,
+            headers: { 'Cookie': cookie },
+          },
+          (res) => {
+            if (REDIRECT_CODES.has(res.statusCode) && res.headers.location) {
+              res.resume(); // discard the (usually empty) redirect body
+              if (redirectsLeft <= 0) {
+                reject(new Error(`Too many redirects fetching ${url}`));
+                return;
+              }
+              const nextUrl = new URL(res.headers.location, currentUrl).toString();
+              get(nextUrl, redirectsLeft - 1);
+              return;
+            }
+
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+              res.resume();
+              reject(new Error(`Download failed with status ${res.statusCode}: ${currentUrl}`));
+              return;
+            }
+
+            const ws = fs.createWriteStream(destPath);
+            res.pipe(ws);
+            ws.on('finish', () => { ws.close(); resolve(); });
+            ws.on('error', reject);
+          }
+        )
+        .on('error', reject);
+    }
+
+    get(url, maxRedirects);
+  });
+}
+
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
 }
@@ -138,21 +191,7 @@ const handlers = {
     fs.mkdirSync(dir, { recursive: true });
     const tmpPath = require('path').join(dir, 'overleaf_' + (fileName || 'download'));
 
-    await new Promise((resolve, reject) => {
-      const parsed = new URL(url);
-      const httpModule = parsed.protocol === 'http:' ? require('http') : require('https');
-      httpModule.get({
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
-        path: parsed.pathname + parsed.search,
-        headers: { 'Cookie': cookie },
-      }, (res) => {
-        const ws = fs.createWriteStream(tmpPath);
-        res.pipe(ws);
-        ws.on('finish', () => { ws.close(); resolve(); });
-        ws.on('error', reject);
-      }).on('error', reject);
-    });
+    await downloadToFile(url, cookie, tmpPath);
 
     return { path: tmpPath };
   },
@@ -170,33 +209,7 @@ const handlers = {
     const fs = require('fs');
     fs.mkdirSync(dir, { recursive: true });
     const tmpPath = require('path').join(dir, 'overleaf_' + (fileName || fileId));
-    await new Promise((resolve, reject) => {
-      const parsed = new URL(url);
-      const httpModule = parsed.protocol === 'http:' ? require('http') : require('https');
-      httpModule.get({
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
-        path: parsed.pathname,
-        headers: { 'Cookie': cookie },
-      }, (res) => {
-        if (res.statusCode === 302 && res.headers.location) {
-          // Follow redirect
-          const redirectParsed = new URL(res.headers.location);
-          const redirectModule = redirectParsed.protocol === 'http:' ? require('http') : require('https');
-          redirectModule.get(res.headers.location, { headers: { 'Cookie': cookie } }, (res2) => {
-            const ws = fs.createWriteStream(tmpPath);
-            res2.pipe(ws);
-            ws.on('finish', () => { ws.close(); resolve(); });
-            ws.on('error', reject);
-          }).on('error', reject);
-        } else {
-          const ws = fs.createWriteStream(tmpPath);
-          res.pipe(ws);
-          ws.on('finish', () => { ws.close(); resolve(); });
-          ws.on('error', reject);
-        }
-      }).on('error', reject);
-    });
+    await downloadToFile(url, cookie, tmpPath);
 
     return { path: tmpPath };
   },
