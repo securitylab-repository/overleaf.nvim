@@ -44,16 +44,29 @@ function buildOutputUrl(fileUrl, compileResult) {
 
 /**
  * GET a URL (following redirects) and write the response body to destPath.
- * Rejects on a non-2xx final status so a redirect/auth failure never
+ * Rejects on a non-2xx/206 final status so a redirect/auth failure never
  * silently produces an empty file. `cookie` is optional — the CLSI/CDN
  * host from buildOutputUrl() is cross-origin and authenticates via its
  * signed query params, not the web frontend session cookie.
+ *
+ * The pdfDownloadDomain CDN (enable_pdf_caching=true) doesn't always serve
+ * the file as one 200 response: while the object is still being composed
+ * server-side it answers a plain GET with a 206 carrying only the bytes
+ * written so far, and expects the same URL to be re-fetched for the next
+ * chunk until a final 200 arrives. Overleaf's own web client (pdf.js
+ * custom transport) and other clients (e.g. Overleaf Workshop's
+ * _downloadAbsolute) handle this by looping and concatenating every
+ * 206/200 body in order. Treating a lone 206 as the whole file (the old
+ * behavior here) silently produced a truncated PDF that failed to render.
  */
 function downloadToFile(url, cookie, destPath, maxRedirects = 5) {
   const fs = require('fs');
+  const MAX_CHUNKS = 200; // safety cap against a CDN that never settles on 200
 
   return new Promise((resolve, reject) => {
-    function get(currentUrl, redirectsLeft) {
+    const chunks = [];
+
+    function get(currentUrl, redirectsLeft, chunksLeft) {
       const parsed = new URL(currentUrl);
       const httpModule = parsed.protocol === 'http:' ? require('http') : require('https');
       httpModule
@@ -72,26 +85,43 @@ function downloadToFile(url, cookie, destPath, maxRedirects = 5) {
                 return;
               }
               const nextUrl = new URL(res.headers.location, currentUrl).toString();
-              get(nextUrl, redirectsLeft - 1);
+              get(nextUrl, redirectsLeft - 1, chunksLeft);
               return;
             }
 
-            if (res.statusCode < 200 || res.statusCode >= 300) {
+            if (res.statusCode !== 200 && res.statusCode !== 206) {
               res.resume();
               reject(new Error(`Download failed with status ${res.statusCode}: ${currentUrl}`));
               return;
             }
 
-            const ws = fs.createWriteStream(destPath);
-            res.pipe(ws);
-            ws.on('finish', () => { ws.close(); resolve(); });
-            ws.on('error', reject);
+            const body = [];
+            res.on('data', (d) => body.push(d));
+            res.on('error', reject);
+            res.on('end', () => {
+              chunks.push(Buffer.concat(body));
+
+              if (res.statusCode === 200) {
+                fs.writeFile(destPath, Buffer.concat(chunks), (err) => {
+                  if (err) reject(err);
+                  else resolve();
+                });
+                return;
+              }
+
+              // 206: more chunks are still being composed server-side.
+              if (chunksLeft <= 0) {
+                reject(new Error(`Gave up after ${MAX_CHUNKS} partial (206) responses: ${url}`));
+                return;
+              }
+              get(currentUrl, redirectsLeft, chunksLeft - 1);
+            });
           }
         )
         .on('error', reject);
     }
 
-    get(url, maxRedirects);
+    get(url, maxRedirects, MAX_CHUNKS);
   });
 }
 
