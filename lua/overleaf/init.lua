@@ -8,19 +8,107 @@ local synctex = require('overleaf.synctex')
 
 local M = {}
 
+--- Launch `cmd` in the background and log if it fails to spawn or exits
+--- with a non-zero code, instead of failing silently.
+---@param cmd string[]
+---@param on_exit_code (fun(code: integer, output: string))|nil called with the
+---  exit code and captured stdout+stderr whenever the process exits non-zero,
+---  *instead of* the default error log (caller decides whether/how to log).
+---@return integer job_id (<= 0 if jobstart itself failed)
+local function spawn(cmd, on_exit_code)
+  local out_lines = {}
+  local function collect(_, data, _)
+    for _, line in ipairs(data) do
+      if line ~= '' then table.insert(out_lines, line) end
+    end
+  end
+  local job = vim.fn.jobstart(cmd, {
+    detach = true,
+    on_stdout = collect,
+    on_stderr = collect,
+    on_exit = function(_, code, _)
+      if code == 0 then return end
+      local output = table.concat(out_lines, '\n')
+      if on_exit_code then
+        on_exit_code(code, output)
+      else
+        config.log('error', 'PDF viewer exited with code %d: %s%s', code, table.concat(cmd, ' '), #out_lines > 0 and ('\n' .. output) or '')
+      end
+    end,
+  })
+  if job <= 0 then
+    config.log('error', 'Failed to launch PDF viewer (jobstart returned %d): %s', job, table.concat(cmd, ' '))
+  end
+  return job
+end
+
+local last_sumatra_job = nil
+
+--- Launch SumatraPDF, retrying on a fast failure.
+---
+--- SumatraPDF's own already-running-instance detection (which it always
+--- does at startup, independently of its ReuseInstance setting) can
+--- intermittently bail out with exit code 1 *before creating any window* —
+--- reproduced manually outside Neovim, both right after force-killing a
+--- previous instance (most likely: the old instance's mutex/window hasn't
+--- been released yet) and, less predictably, on its own. A fast exit (it
+--- would otherwise keep running until the user closes the window) is safe
+--- to retry: there's no window/state to lose since none was ever shown.
+--- Retry delays in ms: the race is with an OS-level mutex/window release
+--- whose timing isn't under our control, so back off rather than retrying
+--- at a fixed interval that might consistently lose the race.
+local SUMATRA_RETRY_DELAYS_MS = { 300, 600, 1200, 2400 }
+
+---@param viewer string
+---@param file_path string
+---@param attempt integer 1-indexed into SUMATRA_RETRY_DELAYS_MS
+local function spawn_sumatra(viewer, file_path, attempt)
+  local cmd = { viewer, file_path }
+  local started = vim.uv.hrtime()
+  local job = spawn(cmd, function(code, output)
+    local elapsed_ms = (vim.uv.hrtime() - started) / 1e6
+    local delay = SUMATRA_RETRY_DELAYS_MS[attempt]
+    if elapsed_ms < 2000 and delay then
+      vim.defer_fn(function() spawn_sumatra(viewer, file_path, attempt + 1) end, delay)
+    else
+      config.log('error', 'PDF viewer exited with code %d: %s%s', code, table.concat(cmd, ' '), output ~= '' and ('\n' .. output) or '')
+    end
+  end)
+  if job > 0 then last_sumatra_job = job end
+end
+
 --- Open a file with the configured viewer or platform default
 ---@param file_path string
 local function open_file(file_path)
   local viewer = config.get().pdf_viewer
   if viewer then
     -- User-configured viewer: run as background job to avoid disrupting cursor/window layout.
-    -- SumatraPDF reuses its existing window (and, with ReloadModifiedDocuments
-    -- enabled in its own settings, auto-reloads the file) when given
-    -- -reuse-instance — without it, like any other viewer, it opens a new
-    -- window on every compile.
-    local cmd = { viewer, file_path }
-    if viewer:lower():match('sumatrapdf%.exe$') then table.insert(cmd, 2, '-reuse-instance') end
-    vim.fn.jobstart(cmd, { detach = true })
+    if viewer:lower():match('sumatrapdf%.exe$') then
+      -- SumatraPDF's own instance-reuse (both its `-reuse-instance` flag and
+      -- its `ReuseInstance` setting) reliably exits the new process with
+      -- code 1 instead of updating the existing window, on at least this
+      -- environment (confirmed by manually reproducing both paths outside
+      -- Neovim) — so don't rely on it. Instead, close the window we opened
+      -- last time ourselves and open a plain new one; this loses SumatraPDF's
+      -- own page/zoom-preserving reuse, but that's better than a compile that
+      -- silently never shows a PDF.
+      if last_sumatra_job then
+        pcall(vim.fn.jobstop, last_sumatra_job)
+        -- Block (briefly, bounded) until the old process has actually
+        -- exited, rather than assuming jobstop's signal took effect
+        -- immediately — the new instance's already-running-instance check
+        -- (see spawn_sumatra) can otherwise still see it. This confirms the
+        -- process is gone, not that its mutex/window is fully released by
+        -- the OS, hence the extra margin below and the retry regardless.
+        vim.fn.jobwait({ last_sumatra_job }, 500)
+        last_sumatra_job = nil
+        vim.defer_fn(function() spawn_sumatra(viewer, file_path, 1) end, 150)
+      else
+        spawn_sumatra(viewer, file_path, 1)
+      end
+    else
+      spawn({ viewer, file_path })
+    end
   else
     -- Auto-detect platform launcher (runs in background)
     local cmd
@@ -35,7 +123,7 @@ local function open_file(file_path)
     else
       cmd = { 'xdg-open', file_path }
     end
-    vim.fn.jobstart(cmd, { detach = true })
+    spawn(cmd)
   end
 end
 
