@@ -1,35 +1,21 @@
 --- SyncTeX forward search (nvim -> PDF).
 ---
---- KNOWN ISSUE: currently does not work reliably against overleaf.com. See
---- below for what's confirmed working and what isn't.
----
 --- Overleaf does not serve a compile's raw output.synctex.gz for direct
 --- download (confirmed: a consistent 503 from its CDN, even though
 --- output.pdf and output.log download fine from the same build) — its own
 --- web client never does either. Instead it exposes a server-side lookup:
 --- GET /project/<id>/sync/code?file=...&line=...&buildId=...&editorId=...
 --- returns the matching {page, h, v} in the compiled PDF directly (the
---- same endpoint its "jump to PDF" button uses). That response is a page +
---- a position on it, not something a viewer's own SyncTeX-file-based
---- forward-search flag can consume (SumatraPDF's `-forward-search` needs a
---- local .synctex.gz, which we don't have), so this jumps SumatraPDF to
---- the right PAGE via `-page`, not the exact position on it.
+--- same endpoint its "jump to PDF" button uses). `page`/`h`/`v` are passed
+--- to SumatraPDF via `-page`/`-scroll`, landing on the exact position, not
+--- just the page.
 ---
---- The request this module sends has been verified byte-for-byte identical
---- (params, including editorId/clsiServerId/buildId, and headers,
---- including X-Csrf-Token) to a captured request from Overleaf's own web
---- UI for the same project/file/line — including replaying our exact
---- generated URL directly in the browser, which also returns an empty
---- match. A controlled A/B test also showed a fresh build compiled via
---- Overleaf's own "Recompile" button *can* be forward-searched
---- successfully, while a fresh build compiled through this plugin's
---- `:Overleaf compile` (same project, same account, moments apart)
---- consistently cannot — so something about how the compile itself is
---- triggered here produces a build sync/code can't resolve against, even
---- though the resulting PDF/log are otherwise fine. `editorId` (sent with
---- the compile request, matching the web client) and `rootDoc_id` (ditto)
---- were both tried as the missing piece and neither changed the outcome.
---- Not yet root-caused beyond this.
+--- `file` has to be given in synctex's own path convention, which is
+--- relative to the root document's directory and marks that directory with
+--- a literal "/." segment (see `to_synctex_path` below) — get this wrong
+--- and sync/code silently returns no match for otherwise-valid requests.
+--- This only bites multi-file projects whose root doc lives in a
+--- subfolder; a root-level main.tex never needs the transform.
 ---
 --- Inverse search (PDF -> nvim) is not implemented: SumatraPDF only runs
 --- an external inverse-search command when it has resolved the click
@@ -42,6 +28,27 @@ local M = {}
 --- Lazy require to avoid a load-order cycle with init.lua (same pattern as
 --- the other submodules, e.g. tree.lua).
 local function overleaf() return require('overleaf') end
+local function project() return require('overleaf.project') end
+
+--- SyncTeX records a compiled-in file's path relative to the root
+--- document's own directory (its compile working directory) — so a file
+--- that lives in the *same* directory as the root doc appears in synctex
+--- as "<rootDir>/./name.tex", not plain "<rootDir>/name.tex". Overleaf's
+--- own web client applies this exact transform before calling sync/code
+--- (services/web/.../use-synctex.ts, getCurrentFilePath) — single-file and
+--- root-at-project-root projects never hit it (rootDir is empty), which is
+--- why this only showed up on multi-file projects with the root doc inside
+--- a subfolder.
+---@param doc_path string
+---@param root_doc_path string|nil
+---@return string
+local function to_synctex_path(doc_path, root_doc_path)
+  local root_dir = root_doc_path and root_doc_path:match('^(.*)/[^/]+$')
+  if root_dir and root_dir ~= '' and doc_path:sub(1, #root_dir) == root_dir then
+    return root_dir .. '/.' .. doc_path:sub(#root_dir + 1)
+  end
+  return doc_path
+end
 
 --- Ensure this session has a stable editorId, creating one if needed.
 ---@return string
@@ -89,12 +96,16 @@ function M.forward_search()
 
   local meta = ol._state.last_compile_meta or {}
 
+  local root_doc_id = ol._state.project_data and ol._state.project_data.rootDoc_id
+  local root_doc = root_doc_id and project().get_doc_by_id(root_doc_id)
+  local sync_file = to_synctex_path(doc.path, root_doc and root_doc.path)
+
   local bridge = require('overleaf.bridge')
   bridge.request('syncCode', {
     cookie = config.get().cookie,
     csrfToken = ol._state.csrf_token,
     projectId = ol._state.project_id,
-    file = doc.path,
+    file = sync_file,
     line = line,
     column = column,
     buildId = ol._state.last_build_id,
@@ -110,9 +121,9 @@ function M.forward_search()
     if not hit then
       config.log(
         'warn',
-        'No matching PDF location found for this line (known issue — see lua/overleaf/synctex.lua)'
+        'No matching PDF location found for this line — the file may not be part of the current compile (check the project'
+          .. "'s Main file in Overleaf) or this line has no mapped position (e.g. blank lines, preamble)"
       )
-      config.log('debug', 'GET %s -> %s', result.requestUrl or '?', result.rawBody or '?')
       return
     end
 
@@ -121,8 +132,15 @@ function M.forward_search()
       '-reuse-instance',
       '-page',
       tostring(hit.page),
-      ol._state.last_pdf_path,
     }
+    -- h/v are the synctex-convention point offset on the page (same
+    -- coordinate space SumatraPDF's own forward-search highlight uses) —
+    -- scroll there directly instead of just landing on top of the page.
+    if hit.h and hit.v then
+      table.insert(cmd, '-scroll')
+      table.insert(cmd, string.format('%s,%s', tostring(hit.h), tostring(hit.v)))
+    end
+    table.insert(cmd, ol._state.last_pdf_path)
     vim.fn.jobstart(cmd, { detach = true })
   end)
 end
