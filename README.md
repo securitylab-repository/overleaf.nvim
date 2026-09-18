@@ -116,7 +116,7 @@ To get the cookie manually: open overleaf.com in your browser → DevTools (F12)
 | `:Overleaf sync` | Sync all documents to/from disk |
 | `:Overleaf sync import` | Import external changes from disk to Overleaf |
 | `:Overleaf sync export` | Export all documents to disk |
-| `:Overleaf forwardsearch` | Jump from the cursor to the matching page in the compiled PDF (SyncTeX) — ⚠️ [known issue](#synctex-forward-search-nvim--pdf--known-issue-not-currently-working), not currently working |
+| `:Overleaf forwardsearch` | Jump from the cursor to the matching position in the compiled PDF (SyncTeX) |
 
 ### Default Keymaps
 
@@ -167,12 +167,31 @@ require('overleaf').setup({
   -- When set, all documents are mirrored to disk and external changes are synced back.
   sync_dir = '~/.overleaf',
 
+  -- Base Overleaf instance URL (default: 'https://www.overleaf.com'; set for self-hosted)
+  base_url = 'https://www.overleaf.com',
+
+  -- PDF viewer command (default: nil = auto-detect — 'open' on macOS, 'xdg-open'
+  -- on Linux, 'start' on Windows). Give it SumatraPDF's full path on Windows to
+  -- get SyncTeX forward search (see below).
+  pdf_viewer = nil,
+
+  -- Directory downloaded PDFs are written to (default: nil = system temp dir)
+  pdf_dir = nil,
+
   -- SumatraPDF binary, used for SyncTeX forward search (Windows only)
   sumatra_path = 'SumatraPDF.exe',
 
   -- Set to false to disable default keymaps
   keys = true,
 })
+```
+
+### A nicer picker (optional)
+
+Every list in this plugin (`:Overleaf projects`, document picker, history, …) goes through `vim.ui.select`. Neovim's built-in fallback for that is a numbered list where you type a digit and press Enter. Installing a `vim.ui.select` provider — [dressing.nvim](https://github.com/stevearc/dressing.nvim), [telescope-ui-select](https://github.com/nvim-telescope/telescope-ui-select.nvim), [fzf-lua](https://github.com/ibhagwan/fzf-lua), [snacks.nvim](https://github.com/folke/snacks.nvim)'s picker, etc. — replaces it everywhere (not just in this plugin) with an interactive list you navigate with arrows/`j`/`k`/`Tab` and confirm with Enter. Simplest option:
+
+```lua
+{ 'stevearc/dressing.nvim', lazy = false, opts = {} }
 ```
 
 ## Workflow
@@ -222,20 +241,23 @@ claude
 
 Claude Code can now read all your LaTeX files and make edits that sync back to Overleaf in real-time.
 
-## SyncTeX forward search (nvim → PDF) — ⚠️ known issue, not currently working
+## SyncTeX forward search (nvim → PDF)
 
-`:Overleaf forwardsearch` (or `<leader>ov`) is meant to jump from the cursor in your `.tex` source to the matching page in the compiled PDF, via SumatraPDF on Windows. **As currently implemented it does not reliably work against overleaf.com** and usually reports "No matching PDF location found for this line."
+`:Overleaf forwardsearch` (or `<leader>ov`) jumps from the cursor in your `.tex` source to the matching position in the compiled PDF, via SumatraPDF on Windows.
 
-What's confirmed, for anyone picking this up:
+Overleaf doesn't serve a compile's raw `.synctex.gz` for direct download (its own web client doesn't either — confirmed via a consistent 503), so this can't hand a local SyncTeX table to a PDF viewer's own `-forward-search`. It instead calls Overleaf's own `/project/<id>/sync/code` endpoint — the same one the web editor's "jump to PDF" button uses — which returns a page + position (`page`, `h`, `v`) directly; those are passed to SumatraPDF via `-page`/`-scroll`.
 
-- Overleaf doesn't serve a compile's raw `.synctex.gz` for direct download (its own web client doesn't either — confirmed via a consistent 503), so this can't hand a local SyncTeX table to a PDF viewer's own `-forward-search`. It instead calls Overleaf's own `/project/<id>/sync/code` endpoint — the same one the web editor's "jump to PDF" button uses — which returns a page + position directly.
-- The request this sends has been verified byte-for-byte identical (query params — `file`, `line`, `column`, `editorId`, `buildId`, `clsiserverid` — and headers, including `X-Csrf-Token`) to a captured request from Overleaf's own web UI for the same project/file/line, including replaying the exact generated URL directly in a browser tab (same cookies), which also comes back empty.
-- A controlled A/B test showed a fresh build compiled via Overleaf's own "Recompile" button *can* be forward-searched successfully; a fresh build compiled through `:Overleaf compile` moments later, same project/account, consistently cannot — so something about how this plugin triggers the compile produces a build `sync/code` can't resolve against, even though the resulting PDF/log are otherwise fine.
-- Sending `editorId` and `rootDoc_id` with the compile request (matching Overleaf's web client, which this plugin's compile request was missing) were both tried as the fix and neither changed the outcome.
+For multi-file projects where the root document lives inside a subfolder, the `file` path sent to `sync/code` has to follow synctex's own convention (the root doc's directory gets a literal `/.` segment inserted — see `to_synctex_path` in `lua/overleaf/synctex.lua`), otherwise the lookup silently returns no match for files in that same folder. Single-file projects and root-at-project-root layouts never hit this.
 
-Not yet root-caused beyond this — see the comment at the top of `lua/overleaf/synctex.lua` for the full trail. Next step would be comparing raw network traffic (e.g. via a proxy) between the browser and this plugin's Node bridge, which wasn't possible in the environment this was debugged in.
+If forward search consistently finds no match for one particular file in a project but works for others, check which file is actually set as the project's **Main file** in Overleaf (right-click it in the web editor's file tree → "Set as Main File") — `sync/code` can only resolve lines that were part of the compiled build, so a file that isn't the root document (or `\input`/`\include`d from it) legitimately has no match.
 
-**Inverse search (double-click in the PDF → jump in Neovim) isn't implemented at all**, independent of the above: SumatraPDF only invokes an external command on double-click when it has resolved the click itself from a local SyncTeX table, which isn't available here either way.
+**Inverse search (double-click in the PDF → jump in Neovim) isn't implemented at all**: SumatraPDF only invokes an external command on double-click when it has resolved the click itself from a local SyncTeX table, which isn't available here either way.
+
+### SumatraPDF reliability on Windows
+
+`open_file` in `lua/overleaf/init.lua` doesn't rely on SumatraPDF's own instance-reuse (neither its `-reuse-instance` flag nor its `ReuseInstance` setting): on at least one Windows ARM64 machine, that mechanism reliably exited the new SumatraPDF process with code 1 instead of updating the existing window — reproduced manually outside Neovim too, so it isn't specific to this plugin's launcher. Instead the plugin tracks the window it opened for the last compile, closes it itself, and launches a plain new one, retrying with backoff if SumatraPDF exits fast (before ever showing a window) — which can still happen occasionally, most likely a race with the previous process's mutex/window not yet being released by the OS.
+
+If you're on Windows on ARM (not just an ARM64 machine running the x64 build under emulation), get the native ARM64 build of SumatraPDF from [sumatrapdfreader.org](https://www.sumatrapdfreader.org/download-free-pdf-viewer) — the x64 build under emulation was seen to intermittently create its window without ever showing it, independent of anything this plugin does.
 
 ## How It Works
 
