@@ -9,6 +9,8 @@ M._config = {
   pdf_dir = nil, -- PDF output directory (nil = system temp dir)
   sync_dir = nil, -- Local file sync directory (nil = disabled; enables external tool integration)
   sumatra_path = 'SumatraPDF.exe', -- SumatraPDF binary, used for SyncTeX forward search (Windows only)
+  forward_search_highlight = true, -- highlight the matched text in SumatraPDF on forward search (false = just scroll there)
+  forward_search_range = 'paragraph', -- lines highlighted around the cursor: 'paragraph', or N for N lines before and after (0 = only the cursor line)
   log_level = 'info', -- 'debug', 'info', 'warn', 'error'
 }
 

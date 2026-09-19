@@ -181,6 +181,15 @@ require('overleaf').setup({
   -- SumatraPDF binary, used for SyncTeX forward search (Windows only)
   sumatra_path = 'SumatraPDF.exe',
 
+  -- Highlight the matched text in SumatraPDF on forward search (default: true).
+  -- Set to false to only scroll to the position.
+  forward_search_highlight = true,
+
+  -- Lines highlighted around the cursor: 'paragraph' (default, the block of
+  -- non-blank lines the cursor is in) or a number N for N lines before and
+  -- after (0 = only the cursor line).
+  forward_search_range = 'paragraph',
+
   -- Set to false to disable default keymaps
   keys = true,
 })
@@ -245,13 +254,34 @@ Claude Code can now read all your LaTeX files and make edits that sync back to O
 
 `:Overleaf forwardsearch` (or `<leader>ov`) jumps from the cursor in your `.tex` source to the matching position in the compiled PDF, via SumatraPDF on Windows.
 
-Overleaf doesn't serve a compile's raw `.synctex.gz` for direct download (its own web client doesn't either — confirmed via a consistent 503), so this can't hand a local SyncTeX table to a PDF viewer's own `-forward-search`. It instead calls Overleaf's own `/project/<id>/sync/code` endpoint — the same one the web editor's "jump to PDF" button uses — which returns a page + position (`page`, `h`, `v`) directly; those are passed to SumatraPDF via `-page`/`-scroll`.
+Overleaf doesn't serve a compile's raw `.synctex.gz` for direct download (its own web client doesn't either — confirmed via a consistent 503), so this can't hand a local SyncTeX table to a PDF viewer's own `-forward-search`. It instead calls Overleaf's own `/project/<id>/sync/code` endpoint — the same one the web editor's "jump to PDF" button uses — which returns a page + position (`page`, `h`, `v`) directly; those are passed to SumatraPDF (see below).
+
+### Highlighting the matched text
+
+`sync/code` also returns the size of the matched box (`width`, `height`). SumatraPDF has no flag to draw an arbitrary rectangle, but it draws its own coloured highlight for `-forward-search` results. That only happens when it resolves the search from a local SyncTeX table. So the plugin writes a tiny one next to the PDF (`<name>.synctex`, one record covering the matched box) and calls `-forward-search` on it. This replaces the `-page`/`-scroll` call. The generated table is only used for this and never contains the real document.
+
+A single source line often maps to a small or oddly placed box. So by default the highlight covers the whole paragraph around the cursor. `sync/code` maps one source line at a time, so the plugin asks for the first and last line of the paragraph and highlights the box that covers both. Edge lines that produce no text (`\begin{...}`, `\label{...}`) are skipped in favour of the next line inward, up to 6 tries per edge. Set `forward_search_range = 2` to highlight 2 lines before and after the cursor instead, or `0` for the cursor line only.
+
+Limits:
+- A paragraph is delimited by blank lines only, capped at 40 lines each way. Without blank lines, a `\section{...}` directly followed by text counts as part of the same block.
+- If the paragraph runs across a page break, only the part on the cursor's page is highlighted.
+
+The colour comes from SumatraPDF's own settings (Settings → Advanced Options), not from this plugin:
+
+```
+ForwardSearch [
+	HighlightColor = #ffff00
+	HighlightPermanent = true
+]
+```
+
+By default the highlight fades after a moment. `HighlightPermanent = true` keeps it until you click in the PDF. `HighlightOffset` above 0 turns the box into a bar in the page margin instead. Set `forward_search_highlight = false` to go back to plain scrolling.
 
 For multi-file projects where the root document lives inside a subfolder, the `file` path sent to `sync/code` has to follow synctex's own convention (the root doc's directory gets a literal `/.` segment inserted — see `to_synctex_path` in `lua/overleaf/synctex.lua`), otherwise the lookup silently returns no match for files in that same folder. Single-file projects and root-at-project-root layouts never hit this.
 
 If forward search consistently finds no match for one particular file in a project but works for others, check which file is actually set as the project's **Main file** in Overleaf (right-click it in the web editor's file tree → "Set as Main File") — `sync/code` can only resolve lines that were part of the compiled build, so a file that isn't the root document (or `\input`/`\include`d from it) legitimately has no match.
 
-**Inverse search (double-click in the PDF → jump in Neovim) isn't implemented at all**: SumatraPDF only invokes an external command on double-click when it has resolved the click itself from a local SyncTeX table, which isn't available here either way.
+**Inverse search (double-click in the PDF → jump in Neovim) isn't implemented at all**: SumatraPDF only invokes an external command on double-click when it has resolved the click itself from a local SyncTeX table, which isn't available here either way. The one-box table written for the highlight only covers the last forward-search result, so clicking elsewhere in the PDF still finds nothing.
 
 ### SumatraPDF reliability on Windows
 
