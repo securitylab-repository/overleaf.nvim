@@ -44,6 +44,12 @@ end
 
 local last_sumatra_job = nil
 
+--- Jobs we stopped ourselves (see open_file), keyed by job id. Their
+--- non-zero exit (SIGTERM, 143) is expected, so it must neither be logged as
+--- a failure nor trigger spawn_sumatra's retry.
+---@type table<integer, boolean>
+local stopped_sumatra_jobs = {}
+
 --- Launch SumatraPDF, retrying on a fast failure.
 ---
 --- SumatraPDF's own already-running-instance detection (which it always
@@ -65,7 +71,12 @@ local SUMATRA_RETRY_DELAYS_MS = { 300, 600, 1200, 2400 }
 local function spawn_sumatra(viewer, file_path, attempt)
   local cmd = { viewer, file_path }
   local started = vim.uv.hrtime()
-  local job = spawn(cmd, function(code, output)
+  local job
+  job = spawn(cmd, function(code, output)
+    if stopped_sumatra_jobs[job] then
+      stopped_sumatra_jobs[job] = nil
+      return
+    end
     local elapsed_ms = (vim.uv.hrtime() - started) / 1e6
     local delay = SUMATRA_RETRY_DELAYS_MS[attempt]
     if elapsed_ms < 2000 and delay then
@@ -93,7 +104,8 @@ local function open_file(file_path)
       -- own page/zoom-preserving reuse, but that's better than a compile that
       -- silently never shows a PDF.
       if last_sumatra_job then
-        pcall(vim.fn.jobstop, last_sumatra_job)
+        local ok, stopped = pcall(vim.fn.jobstop, last_sumatra_job)
+        if ok and stopped == 1 then stopped_sumatra_jobs[last_sumatra_job] = true end
         -- Block (briefly, bounded) until the old process has actually
         -- exited, rather than assuming jobstop's signal took effect
         -- immediately — the new instance's already-running-instance check
